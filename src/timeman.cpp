@@ -52,12 +52,13 @@ namespace {
   }
 
   template<TimeType T>
-  TimePoint remaining(TimePoint myTime, int movesToGo, int ply, TimePoint slowMover) {
+  TimePoint remaining(TimePoint myTime, int movesToGo, int ply, TimePoint slowMover, TimePoint theirTime) {
 
     constexpr double TMaxRatio   = (T == OptimumTime ? 1.0 : MaxRatio);
     constexpr double TStealRatio = (T == OptimumTime ? 0.0 : StealRatio);
 
     double moveImportance = (move_importance(ply) * slowMover) / 100.0;
+    moveImportance = moveImportance * myTime / theirTime; // Relative ratio
     double otherMovesImportance = 0.0;
 
     for (int i = 1; i < movesToGo; ++i)
@@ -88,6 +89,7 @@ void TimeManagement::init(Search::LimitsType& limits, Color us, int ply) {
   TimePoint slowMover       = Options["Slow Mover"];
   TimePoint npmsec          = Options["nodestime"];
   TimePoint hypMyTime;
+  TimePoint hypTheirTime;
 
   // If we have to play in 'nodes as time' mode, then convert from time
   // to nodes, and use resulting values in time management formulas.
@@ -118,11 +120,15 @@ void TimeManagement::init(Search::LimitsType& limits, Color us, int ply) {
       hypMyTime =  limits.time[us]
                  + limits.inc[us] * (hypMTG - 1)
                  - moveOverhead * (2 + std::min(hypMTG, 40));
+      hypTheirTime =  limits.time[!us]
+                 + limits.inc[!us] * (hypMTG - 1)
+                 - moveOverhead * (2 + std::min(hypMTG, 40));
 
       hypMyTime = std::max(hypMyTime, TimePoint(0));
+      hypTheirTime = std::max(hypTheirTime, TimePoint(0));
 
-      TimePoint t1 = minThinkingTime + remaining<OptimumTime>(hypMyTime, hypMTG, ply, slowMover);
-      TimePoint t2 = minThinkingTime + remaining<MaxTime    >(hypMyTime, hypMTG, ply, slowMover);
+      TimePoint t1 = minThinkingTime + remaining<OptimumTime>(hypMyTime, hypMTG, ply, slowMover, hypTheirTime);
+      TimePoint t2 = minThinkingTime + remaining<MaxTime    >(hypMyTime, hypMTG, ply, slowMover, hypTheirTime);
 
       optimumTime = std::min(t1, optimumTime);
       maximumTime = std::min(t2, maximumTime);
