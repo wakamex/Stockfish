@@ -35,6 +35,7 @@ void TimeManagement::clear() {
     availableNodes = -1;  // When in 'nodes as time' mode
 }
 
+
 void TimeManagement::advance_nodes_time(std::int64_t nodes) {
     assert(useNodesTime);
     availableNodes = std::max(int64_t(0), availableNodes - nodes);
@@ -49,7 +50,15 @@ void TimeManagement::init(Search::LimitsType& limits,
                           int                 ply,
                           const OptionsMap&   options,
                           double&             originalTimeAdjust) {
-    TimePoint npmsec = TimePoint(options["nodestime"]);
+    TimePoint npmsec       = TimePoint(options["nodestime"]);
+    TimePoint moveOverhead = TimePoint(options["Move Overhead"]);
+
+    // Save clock values in milliseconds before nodestime conversion.
+    const TimePoint moveOverheadMs = moveOverhead;
+    const TimePoint myTimeMs       = limits.time[us];
+    const TimePoint theirTimeMs    = limits.time[!us];
+    const TimePoint myIncMs        = limits.inc[us];
+    const TimePoint theirIncMs     = limits.inc[!us];
 
     // If we have no time, we don't need to fully initialize TM.
     // startTime is used by movetime and useNodesTime is used in elapsed calls.
@@ -58,8 +67,6 @@ void TimeManagement::init(Search::LimitsType& limits,
 
     if (limits.time[us] == 0)
         return;
-
-    TimePoint moveOverhead = TimePoint(options["Move Overhead"]);
 
     // optScale is a percentage of available time to use for the current move.
     // maxScale is a multiplier applied to optimumTime.
@@ -94,19 +101,28 @@ void TimeManagement::init(Search::LimitsType& limits,
         centiMTG = int(scaledTime * 5.051);
 
     // Make sure timeLeft is > 0 since we may use it as a divisor
-    TimePoint timeLeft =
-      std::max(TimePoint(1),
-               limits.time[us]
-                 + (limits.inc[us] * (centiMTG - 100) - moveOverhead * (200 + centiMTG)) / 100);
+    auto timeProjection = [centiMTG](TimePoint time, TimePoint inc, TimePoint overhead) {
+        return std::max(TimePoint(1),
+                        time + (inc * (centiMTG - 100) - overhead * (200 + centiMTG)) / 100);
+    };
+
+    TimePoint timeLeft      = timeProjection(limits.time[us], limits.inc[us], moveOverhead);
+    TimePoint myTimeLeft    = timeProjection(myTimeMs, myIncMs, moveOverheadMs);
+    TimePoint theirTimeLeft = timeProjection(theirTimeMs, theirIncMs, moveOverheadMs);
 
     // x basetime (+ z increment)
     // If there is a healthy increment, timeLeft can exceed the actual available
     // game time for the current move, so also cap to a percentage of available game time.
     if (limits.movestogo == 0)
     {
+        // Scale timeLeft by the ratio of our projected time to the opponent's.
+        const double clockRatio =
+          static_cast<double>(myTimeLeft) / std::max(static_cast<double>(theirTimeLeft), 1.0);
+        const double effectiveTimeLeft = std::max(1.0, static_cast<double>(timeLeft) * clockRatio);
+
         // Extra time according to timeLeft
         if (originalTimeAdjust < 0)
-            originalTimeAdjust = 0.3128 * std::log10(timeLeft) - 0.4354;
+            originalTimeAdjust = 0.3128 * std::log10(effectiveTimeLeft) - 0.4354;
 
         // Calculate time constants based on current time left.
         double logTimeInSec = std::log10(scaledTime / 1000.0);
